@@ -48,6 +48,55 @@ class Produk:
             self.category = 'produk_lelang'
             self.harga *= 0.5  # Auto-discount 50%
 
+#kelas transaksi
+class Transaction:
+    def __init__(self, inventory, db):
+        self.inventory = inventory
+        self.db = db
+        self.cart = []
+    
+    def tambah_ke_keranjang(self, sku, qty):
+        self.cart.append({
+            "sku": sku,
+            "qty": qty
+})
+    def checkout(self):
+        cursor = self.db.cursor()
+
+        try:
+            for item in self.cart:
+                sku = item["sku"]
+                qty = item["qty"]
+
+                    # VALIDASI STOK
+                cursor.execute(
+                    "SELECT stok FROM produk_biasa WHERE no_SKU = %s",
+                    (sku,)
+                )
+                result = cursor.fetchone()
+
+                if not result:
+                    raise Exception(f"Produk dengan SKU {sku} tidak ditemukan")
+
+                stok = result[0]
+
+                if stok < qty:
+                    raise Exception(f"Stok {sku} tidak cukup")
+
+                # KURANGI STOK
+                cursor.execute(
+                "UPDATE produk_biasa SET stok = stok - %s WHERE no_SKU = %s",
+                (qty, sku)
+                )
+
+            self.db.commit()
+            print("Checkout berhasil")
+
+        except Exception as e:
+            self.db.rollback()
+            print("Checkout gagal:", e)
+
+
 # Kelas untuk Inventory (Manajemen Stok)
 class Inventory:
     def __init__(self):
@@ -106,14 +155,21 @@ class Inventory:
             print("Stok tidak cukup atau produk tidak ditemukan.")
 
     def search_produk(self, query, is_lelang=False):
-        results = []
-        for sku, produk in self.produk.items():
-            if query.lower() in produk.name.lower() or query == sku:
-                if is_lelang and produk.category == 'produk_lelang':
-                    results.append(produk)
-                elif not is_lelang and produk.category == 'produk_biasa':
-                    results.append(produk)
-                    return results
+        cursor = self.db.cursor(dictionary=True)
+
+        if is_lelang:
+            cursor.execute(
+                "SELECT * FROM produk_lelang WHERE nama_produk LIKE %s",
+            (f"%{query}%",)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM produk_biasa WHERE nama_produk LIKE %s",
+                (f"%{query}%",)
+            )
+
+        results = cursor.fetchall()
+        return results   # ⬅️ INI KUNCI UTAMA
     
     def move_to_lelang(self, sku, status):
         sku = str(sku)
@@ -165,6 +221,13 @@ class CashierSystem:
             'kasir': User('kasir', 'kasir123', 'kasir'),
             'staff': User('staff', 'staff123', 'staff')
         }
+        self.db = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="",
+            database="db_kasir1"
+        
+        ) 
         self.inventory = Inventory()
         self.current_user = None
 
@@ -239,7 +302,7 @@ class CashierSystem:
 
 
     def menu_kasir(self):
-        transaction = transaction(self.inventory)
+        transaksi = Transaction(self.inventory, self.db)
         while True:
             print("\nMenu Kasir:")
             print("1. Cari Produk Reguler")
@@ -248,23 +311,40 @@ class CashierSystem:
             print("4. Checkout")
             print("5. Logout")
             choice = input("Pilih: ")
-            if choice == '1':
+            if choice == "1":
                 query = input("Cari produk: ")
                 results = self.inventory.search_produk(query, is_lelang=False)
-                for p in results:
-                    print(f"{p.sku}: {p.name} - Rp{p.harga} (Stok: {p.stok})")
-            elif choice == '2':
+
+                if not results:
+                    print("Produk tidak ditemukan.")
+                else:
+                    for p in results:
+                        print(p)
+
+            elif choice == "2":
                 query = input("Cari produk lelang: ")
                 results = self.inventory.search_produk(query, is_lelang=True)
-                for p in results:
-                    print(f"{p.sku}: {p.name} - Rp{p.harga} (Stok: {p.stok})")
+
+                if not results:
+                    print("Produk lelang tidak ditemukan.")
+                else:
+                    for p in results:
+                        print(p)    
+
             elif choice == '3':
                 sku = input("SKU: ")
                 qty = int(input("Jumlah: "))
-                transaction.add_to_cart(sku, qty)
+                transaksi.add_to_cart(sku, qty)
                 print("Ditambahkan ke keranjang.")
-            elif choice == '4':
-                transaction.checkout()
+                
+            elif choice == "4":
+                if not transaksi.cart:
+                    print("Keranjang masih kosong!")
+                else:
+                    transaksi.checkout()
+                    transaksi.cart.clear()
+                    print("Transaksi selesai. Kembali ke login.")
+                break   # ⬅️ INI KUNCI UTAMA                  # ⬅️ balik ke login / menu sebelumnya
             elif choice == '5':
                 self.current_user = None
                 break
