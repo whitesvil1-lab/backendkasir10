@@ -148,7 +148,7 @@ class Inventory:
         conn.commit()
 
         # Update memory
-        produk.category = 'produk Lelang'
+        produk.category = 'produk_lelang'
         produk.harga = harga_diskon
         produk.status = status
         del self.produk[sku]
