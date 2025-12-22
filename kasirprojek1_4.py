@@ -53,54 +53,43 @@ class Transaction:
     def __init__(self, inventory, db):
         self.inventory = inventory
         self.db = db
-        self.cart = []
+        self.cart = {}
     
     def tambah_ke_keranjang(self, sku, qty):
         self.cart.append({
             "sku": sku,
             "qty": qty
 })
+        
+    def add_to_cart(self, sku, qty):
+        if sku in self.cart:
+            self.cart[sku] += qty
+        else:
+            self.cart[sku] = qty
+
     def checkout(self):
         cursor = self.db.cursor()
-
         try:
-            for item in self.cart:
-                sku = item["sku"]
-                qty = item["qty"]
-
-                    # VALIDASI STOK
-                cursor.execute(
-                    "SELECT stok FROM produk_biasa WHERE no_SKU = %s",
-                    (sku,)
-                )
-                result = cursor.fetchone()
-
-                if not result:
-                    raise Exception(f"Produk dengan SKU {sku} tidak ditemukan")
-
-                stok = result[0]
-
-                if stok < qty:
-                    raise Exception(f"Stok {sku} tidak cukup")
-
-                # KURANGI STOK
+            for sku, qty in self.cart.items():
                 cursor.execute(
                 "UPDATE produk_biasa SET stok = stok - %s WHERE no_SKU = %s",
                 (qty, sku)
-                )
-
+            )
             self.db.commit()
-            print("Checkout berhasil")
+            print("Checkout berhasil.")
 
         except Exception as e:
             self.db.rollback()
             print("Checkout gagal:", e)
 
 
+
 # Kelas untuk Inventory (Manajemen Stok)
 class Inventory:
-    def __init__(self):
+    def __init__(self, db):
+        self.db = db
         self.produk = {}  # key: SKU (string), value: Produk
+        self.cart = {}  # {sku: qty}
 
     def add_produk(self, produk):
         self.produk[produk.sku] = produk
@@ -155,21 +144,24 @@ class Inventory:
             print("Stok tidak cukup atau produk tidak ditemukan.")
 
     def search_produk(self, query, is_lelang=False):
-        cursor = self.db.cursor(dictionary=True)
+        try:
+            cursor = self.db.cursor(dictionary=True)
 
-        if is_lelang:
-            cursor.execute(
-                "SELECT * FROM produk_lelang WHERE nama_produk LIKE %s",
-            (f"%{query}%",)
-            )
-        else:
-            cursor.execute(
-                "SELECT * FROM produk_biasa WHERE nama_produk LIKE %s",
-                (f"%{query}%",)
-            )
+            if is_lelang:
+                sql = "SELECT * FROM produk_lelang WHERE Name_product LIKE %s"
+            else:
+                sql = "SELECT * FROM produk_biasa WHERE Name_product LIKE %s"
 
-        results = cursor.fetchall()
-        return results   # ⬅️ INI KUNCI UTAMA
+            cursor.execute(sql, (f"%{query}%",))
+            return cursor.fetchall()
+
+        except AttributeError:
+            print("Error sistem: koneksi database belum tersedia")
+            return []
+
+        except Exception as e:
+            print("Error database:", e)
+            return []
     
     def move_to_lelang(self, sku, status):
         sku = str(sku)
@@ -185,7 +177,6 @@ class Inventory:
             return
 
         harga_diskon = produk.harga * 0.5
-
         cursor = conn.cursor()
 
         # INSERT ke produk_lelang
@@ -228,19 +219,30 @@ class CashierSystem:
             database="db_kasir1"
         
         ) 
-        self.inventory = Inventory()
+        self.inventory = Inventory(self.db)
         self.current_user = None
 
     def login(self):
         username = input("Username: ")
         password = input("Password: ")
+
         if username in self.users and self.users[username].password == password:
             self.current_user = self.users[username]
-            print(f"Login berhasil sebagai {self.current_user.role}")
+            role = self.current_user.role
+            print(f"Login berhasil sebagai {role}")
+
+        # ⬇️ INI KUNCI UTAMA
+            if role == "admin":
+                self.menu_admin()
+            elif role == "kasir":
+                self.menu_kasir()
+            elif role == "staff":
+                self.menu_staff()
+                
             return True
         else:
             print("Login gagal.")
-            return False
+        return False
         
 
         
@@ -305,7 +307,7 @@ class CashierSystem:
         transaksi = Transaction(self.inventory, self.db)
         while True:
             print("\nMenu Kasir:")
-            print("1. Cari Produk Reguler")
+            print("1. Cari Produk Biasa")
             print("2. Cari Produk Lelang")
             print("3. Tambah ke Keranjang")
             print("4. Checkout")
@@ -319,8 +321,12 @@ class CashierSystem:
                     print("Produk tidak ditemukan.")
                 else:
                     for p in results:
-                        print(p)
-
+                        print(
+                            f"{p['no_SKU']} | "
+                            f"{p['Name_product']} | "
+                            f"Harga: {p['Price']} | "
+                            f"Stok: {p['stok']}"
+                        )
             elif choice == "2":
                 query = input("Cari produk lelang: ")
                 results = self.inventory.search_produk(query, is_lelang=True)
@@ -336,7 +342,7 @@ class CashierSystem:
                 qty = int(input("Jumlah: "))
                 transaksi.add_to_cart(sku, qty)
                 print("Ditambahkan ke keranjang.")
-                
+
             elif choice == "4":
                 if not transaksi.cart:
                     print("Keranjang masih kosong!")
