@@ -228,21 +228,12 @@ class CashierSystem:
 
         if username in self.users and self.users[username].password == password:
             self.current_user = self.users[username]
-            role = self.current_user.role
-            print(f"Login berhasil sebagai {role}")
-
-        # ⬇️ INI KUNCI UTAMA
-            if role == "admin":
-                self.menu_admin()
-            elif role == "kasir":
-                self.menu_kasir()
-            elif role == "staff":
-                self.menu_staff()
-                
+            print(f"Login berhasil sebagai {self.current_user.role}")
             return True
         else:
             print("Login gagal.")
-        return False
+            return False
+
         
 
         
